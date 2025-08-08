@@ -2,70 +2,74 @@ import requests
 from bs4 import BeautifulSoup
 import re
 import os
-import ssl
-from requests.adapters import HTTPAdapter
+import concurrent.futures
 
-class TLSAdapter(HTTPAdapter):
-    def init_poolmanager(self, *args, **kwargs):
-        context = ssl.create_default_context()
-        kwargs['ssl_context'] = context
-        return super().init_poolmanager(*args, **kwargs)
-
+# 目标URL列表
 urls = [
-    'https://monitor.gacjie.cn/page/cloudflare/ipv4.html',
-    'https://ip.164746.xyz'
+    'https://ip.164746.xyz', 
+    'https://cf.090227.xyz', 
+    'https://stock.hostmonit.com/CloudFlareYes',
+    'https://www.wetest.vip/page/cloudflare/address_v4.html'
 ]
-ip_pattern = r'\d{1,3}(?:\.\d{1,3}){3}'
 
-session = requests.Session()
-session.mount('https://', TLSAdapter())
+# 正则表达式用于匹配IP地址
+ip_pattern = r'\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b'
 
-# Step 1: 获取所有 IP（去重）
-all_ips = set()
-for url in urls:
-    try:
-        r = session.get(url, timeout=10)
-        r.raise_for_status()
-    except Exception as e:
-        print(f"[错误] 请求失败 {url}：{e}")
-        continue
-
-    soup = BeautifulSoup(r.text, 'html.parser')
-    elements = soup.find_all('tr') if url in urls else soup.find_all('li')
-
-    for elem in elements:
-        all_ips.update(re.findall(ip_pattern, elem.get_text()))
-
-all_ips = list(all_ips)
-print(f"共抓取到 {len(all_ips)} 个唯一 IP")
-
-# Step 2: 批量查询归属地（ip-api.com 每次最多 100 个）
-country_counters = {}
-output = []
-
-for i in range(0, len(all_ips), 100):
-    batch = all_ips[i:i+100]
-    try:
-        resp = requests.post(
-            "http://ip-api.com/batch?fields=query,country",
-            json=batch,
-            timeout=10
-        ).json()
-    except Exception as e:
-        print(f"[错误] 批量查询失败：{e}")
-        continue
-
-    for item in resp:
-        ip = item.get("query")
-        country = item.get("country", "未知")
-        country_counters[country] = country_counters.get(country, 0) + 1
-        seq = country_counters[country]
-        output.append(f"{ip}#{country}{seq:03d}")
-
-# Step 3: 写入文件
+# 删除旧文件
 if os.path.exists('ip.txt'):
     os.remove('ip.txt')
-with open('ip.txt', 'w') as f:
-    f.write("\n".join(output))
 
-print("✅ 保存完毕，每个国家的 IP 都从 001 开始排序")
+# 去重的IP集合
+unique_ips = set()
+
+# 抓取IP地址
+for url in urls:
+    try:
+        response = requests.get(url, timeout=5)
+        if response.status_code == 200:
+            html_content = response.text
+            ip_matches = re.findall(ip_pattern, html_content, re.IGNORECASE)
+            unique_ips.update(ip_matches)
+    except requests.exceptions.RequestException as e:
+        print(f'请求 {url} 失败: {e}')
+        continue
+
+# 对IP排序
+sorted_ips = sorted(unique_ips, key=lambda ip: [int(part) for part in ip.split('.')])
+
+# 国家编号计数器
+country_count = {}
+result_list = []
+lock = None
+
+# 查询 IP 所属国家
+def get_country(ip):
+    try:
+        response = requests.get(f'http://ip-api.com/json/{ip}?lang=zh-CN', timeout=5)
+        data = response.json()
+        country = data.get('country', '未知')
+    except Exception:
+        country = '未知'
+    return ip, country
+
+# 开始并发处理
+with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+    future_to_ip = {executor.submit(get_country, ip): ip for ip in sorted_ips}
+    
+    for future in concurrent.futures.as_completed(future_to_ip):
+        ip, country = future.result()
+        if country not in country_count:
+            country_count[country] = 1
+        else:
+            country_count[country] += 1
+        number = f'{country_count[country]:03d}'
+        result_list.append(f'{ip}#{country}{number}')
+
+# 写入结果
+if result_list:
+    with open('ip.txt', 'w', encoding='utf-8') as f:
+        for line in result_list:
+            f.write(line + '\n')
+    print(f'已保存 {len(result_list)} 个注释IP到 ip.txt 文件。')
+else:
+    print('未找到有效的IP地址。')
