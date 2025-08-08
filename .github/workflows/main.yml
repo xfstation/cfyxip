@@ -2,7 +2,7 @@ name: Update IP List
 
 on:
   schedule:
-    - cron: '0 */6 * * *' # 每3小时运行一次
+    - cron: '0 */6 * * *' # 每6小时运行一次
   workflow_dispatch: # 允许手动触发
 
 jobs:
@@ -21,9 +21,8 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install requests
-        pip install beautifulsoup4
-        
+        pip install requests beautifulsoup4 geoip2 pycountry
+
     - name: Delete workflow runs
       uses: Mattraks/delete-workflow-runs@v2
       with:
