@@ -21,7 +21,7 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install requests beautifulsoup4 geoip2 pycountry
+        pip install requests beautifulsoup4
 
     - name: Delete workflow runs
       uses: Mattraks/delete-workflow-runs@v2
@@ -38,10 +38,11 @@ jobs:
       run: |
         git config --local user.email "actions@github.com"
         git config --local user.name "GitHub Action"
-        if [ -n "$(git status --porcelain)" ]; then
+        # 只在 ip.txt 有改动时提交（忽略未跟踪的缓存文件）
+        if [ -f ip.txt ] && [ -n "$(git status --porcelain -- ip.txt)" ]; then
           git add ip.txt
           git commit -m "Automatic update"
           git push
         else
-          echo "No changes detected, skipping commit."
+          echo "No changes to ip.txt, skipping commit."
         fi
