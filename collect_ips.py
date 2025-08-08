@@ -2,7 +2,7 @@ import requests
 from bs4 import BeautifulSoup
 import re
 import os
-import concurrent.futures
+import time
 
 # 目标URL列表
 urls = [
@@ -19,10 +19,9 @@ ip_pattern = r'\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b'
 if os.path.exists('ip.txt'):
     os.remove('ip.txt')
 
-# 去重的IP集合
+# 使用集合存储IP地址实现自动去重
 unique_ips = set()
 
-# 抓取IP地址
 for url in urls:
     try:
         response = requests.get(url, timeout=5)
@@ -34,42 +33,43 @@ for url in urls:
         print(f'请求 {url} 失败: {e}')
         continue
 
-# 对IP排序
+# 国家统计字典
+country_count = {}
+annotated_ips = []
+
+# 对IP地址排序
 sorted_ips = sorted(unique_ips, key=lambda ip: [int(part) for part in ip.split('.')])
 
-# 国家编号计数器
-country_count = {}
-result_list = []
-lock = None
-
-# 查询 IP 所属国家
-def get_country(ip):
+for ip in sorted_ips:
     try:
-        response = requests.get(f'http://ip-api.com/json/{ip}?lang=zh-CN', timeout=5)
-        data = response.json()
-        country = data.get('country', '未知')
-    except Exception:
+        # 查询 IP 所属国家（使用免费API，速度有限，必要时加延迟）
+        geo_res = requests.get(f'http://ip-api.com/json/{ip}?lang=zh-CN', timeout=5)
+        geo_data = geo_res.json()
+        
+        country = geo_data.get('country', '未知')
+        if not country:
+            country = '未知'
+    except Exception as e:
         country = '未知'
-    return ip, country
 
-# 开始并发处理
-with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
-    future_to_ip = {executor.submit(get_country, ip): ip for ip in sorted_ips}
-    
-    for future in concurrent.futures.as_completed(future_to_ip):
-        ip, country = future.result()
-        if country not in country_count:
-            country_count[country] = 1
-        else:
-            country_count[country] += 1
-        number = f'{country_count[country]:03d}'
-        result_list.append(f'{ip}#{country}{number}')
+    # 更新国家编号计数器
+    if country not in country_count:
+        country_count[country] = 1
+    else:
+        country_count[country] += 1
 
-# 写入结果
-if result_list:
-    with open('ip.txt', 'w', encoding='utf-8') as f:
-        for line in result_list:
-            f.write(line + '\n')
-    print(f'已保存 {len(result_list)} 个注释IP到 ip.txt 文件。')
+    # 格式化编号（3位数）
+    number = f'{country_count[country]:03d}'
+    annotated_ips.append(f'{ip}#{country}{number}')
+
+    # 可选：防止API请求过快被限制（免费接口限制频率）
+    time.sleep(0.5)
+
+# 写入文件
+if annotated_ips:
+    with open('ip.txt', 'w', encoding='utf-8') as file:
+        for line in annotated_ips:
+            file.write(line + '\n')
+    print(f'已保存 {len(annotated_ips)} 个注释IP到 ip.txt 文件。')
 else:
     print('未找到有效的IP地址。')
